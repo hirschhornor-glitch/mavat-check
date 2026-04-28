@@ -92,10 +92,10 @@ form.addEventListener("submit", async (e) => {
       );
       form.reset();
     } else {
-      showStatus(
-        "שגיאה: " + (body.error || `קוד ${resp.status}`),
-        "error",
-      );
+      const parts = [body.error || `קוד ${resp.status}`];
+      if (body.status) parts.push(`GitHub: ${body.status}`);
+      if (body.detail) parts.push(body.detail);
+      showStatus("שגיאה: " + parts.join(" | "), "error");
     }
   } catch (err) {
     showStatus("שגיאת רשת: " + err.message, "error");
