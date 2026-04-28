@@ -34,38 +34,55 @@ async def extract_plans_from_meeting_page(
         await asyncio.sleep(5)
 
         detail_rows = await detail_page.query_selector_all("tr")
-        plan_time_map = {}
+        plan_info_map: dict[str, dict] = {}
         for dr in detail_rows:
             row_text = await dr.inner_text()
             plan_nums_in_row = re.findall(r"\d{3}-\d{7}", row_text)
             plan_nums_in_row = [
                 p for p in plan_nums_in_row if not re.match(r"(05[0-9]|07[2-7])-", p)
             ]
+            if not plan_nums_in_row:
+                continue
+
             time_match = re.search(r"\b(\d{1,2}:\d{2})\b", row_text)
             row_time = time_match.group(1) if time_match else ""
-            for pn in plan_nums_in_row:
-                if pn not in plan_time_map:
-                    plan_time_map[pn] = row_time
 
-        log.info("  נמצאו %d מספרי תכנית בסעיפי ישיבה", len(plan_time_map))
+            cleaned = row_text
+            for pn in plan_nums_in_row:
+                cleaned = cleaned.replace(pn, "")
+            if time_match:
+                cleaned = cleaned.replace(time_match.group(0), "")
+            cleaned = re.sub(r"^\s*\d+\.?\s*", "", cleaned, flags=re.MULTILINE)
+            candidate_lines = [
+                l.strip() for l in cleaned.splitlines() if l.strip()
+            ]
+            title = max(candidate_lines, key=len) if candidate_lines else ""
+
+            for pn in plan_nums_in_row:
+                if pn not in plan_info_map:
+                    plan_info_map[pn] = {"time": row_time, "title": title}
+
+        log.info("  נמצאו %d מספרי תכנית בסעיפי ישיבה", len(plan_info_map))
 
         for eid, plan_name in plans_dict.items():
             padded = eid.zfill(7)
-            for plan_num, plan_time in plan_time_map.items():
+            for plan_num, info in plan_info_map.items():
                 if plan_num.endswith(padded) or eid in plan_num:
+                    final_name = plan_name or info.get("title", "")
                     log.info(
-                        "    התאמה: entity %s → %s בשעה %s",
+                        "    התאמה: entity %s → %s בשעה %s | %s",
                         eid,
                         plan_num,
-                        plan_time or "?",
+                        info.get("time") or "?",
+                        final_name or "(ללא שם)",
                     )
                     matches.append(
                         {
                             "plan": plan_num,
-                            "plan_name": plan_name,
+                            "plan_name": final_name,
                             "meeting_title": f"ועדה מחוזית ירושלים {meeting_id}",
                             "meeting_date": meeting_date,
-                            "meeting_time": plan_time,
+                            "meeting_time": info.get("time", ""),
                             "detail_url": detail_url,
                         }
                     )

@@ -12,6 +12,7 @@ import re
 import sys
 import traceback
 
+from city import fetch_city_meetings
 from mailer import send_error_email, send_results_email
 from mavat import fetch_meetings_via_playwright
 from parsers import parse_plans_from_file, parse_plans_from_url
@@ -63,17 +64,36 @@ async def run(args: argparse.Namespace) -> int:
         send_error_email(args.email, "לא זוהו מספרי תכנית במקור שסופק.")
         return 1
 
+    matches: list[dict] = []
+    errors: list[str] = []
+
     try:
-        matches = await fetch_meetings_via_playwright(plans_dict)
+        mavat_matches = await fetch_meetings_via_playwright(plans_dict)
+        for m in mavat_matches:
+            m.setdefault("source", "mavat")
+        matches.extend(mavat_matches)
     except Exception as e:
         log.exception("שגיאה בגישה ל-Mavat")
-        send_error_email(args.email, f"שגיאה בגישה ל-Mavat: {e}. נסה שוב מאוחר יותר.")
+        errors.append(f"Mavat: {e}")
+
+    try:
+        city_matches = await fetch_city_meetings(plans_dict)
+        matches.extend(city_matches)
+    except Exception as e:
+        log.exception("שגיאה בגישה לאתר העירייה")
+        errors.append(f"עירייה: {e}")
+
+    if errors and not matches:
+        send_error_email(
+            args.email,
+            "שגיאה בגישה למקורות הבדיקה:\n" + "\n".join(errors),
+        )
         return 1
 
     seen_keys = set()
     deduped = []
     for m in matches:
-        key = f"{m['plan']}::{m['meeting_date']}"
+        key = f"{m.get('source','')}::{m['plan']}::{m['meeting_date']}"
         if key in seen_keys:
             continue
         seen_keys.add(key)
@@ -87,7 +107,12 @@ async def run(args: argparse.Namespace) -> int:
     )
 
     try:
-        send_results_email(args.email, deduped, plans_count=len(plans_dict))
+        send_results_email(
+            args.email,
+            deduped,
+            plans_count=len(plans_dict),
+            partial_errors=errors,
+        )
     except Exception:
         log.exception("שליחת מייל נכשלה")
         return 1

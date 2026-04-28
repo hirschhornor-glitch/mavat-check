@@ -33,13 +33,21 @@ def _wrap_html(body_inner: str) -> str:
     )
 
 
+SOURCE_LABELS = {
+    "mavat": "ועדה מחוזית (Mavat)",
+    "city": "ועדה מקומית (עירייה)",
+}
+
+
 def _matches_table(matches: list[dict]) -> str:
     rows = ""
     for m in matches:
         detail_url = m.get("detail_url", "")
         link_html = f'<a href="{detail_url}">קישור</a>' if detail_url else "-"
+        source_label = SOURCE_LABELS.get(m.get("source", "mavat"), m.get("source", ""))
         rows += (
             "<tr>"
+            f'<td style="padding:8px;border:1px solid #ddd;">{source_label}</td>'
             f'<td style="padding:8px;border:1px solid #ddd;">{m["plan"]}</td>'
             f'<td style="padding:8px;border:1px solid #ddd;">{m.get("plan_name", "")}</td>'
             f'<td style="padding:8px;border:1px solid #ddd;">{m["meeting_title"]}</td>'
@@ -51,6 +59,7 @@ def _matches_table(matches: list[dict]) -> str:
     return (
         '<table style="border-collapse:collapse;width:100%">'
         '<tr style="background:#f2f2f2">'
+        '<th style="padding:8px;border:1px solid #ddd;">מקור</th>'
         '<th style="padding:8px;border:1px solid #ddd;">מספר תכנית</th>'
         '<th style="padding:8px;border:1px solid #ddd;">שם התכנית</th>'
         '<th style="padding:8px;border:1px solid #ddd;">ישיבה</th>'
@@ -61,20 +70,34 @@ def _matches_table(matches: list[dict]) -> str:
     )
 
 
-def send_results_email(recipient: str, matches: list[dict], plans_count: int) -> None:
+def send_results_email(
+    recipient: str,
+    matches: list[dict],
+    plans_count: int,
+    partial_errors: list[str] | None = None,
+) -> None:
     sender, password = _sender()
     now = datetime.now().strftime("%d/%m/%Y %H:%M")
 
+    errors_html = ""
+    if partial_errors:
+        errors_list = "".join(f"<li>{e}</li>" for e in partial_errors)
+        errors_html = (
+            '<p style="color:#b91c1c;">'
+            "חלק מהמקורות נכשלו (התוצאות חלקיות):"
+            f"<ul>{errors_list}</ul></p>"
+        )
+
     if matches:
         subject = (
-            f"MavatCheck: נמצאו {len(matches)} התאמות בסדרי יום ועדה מחוזית ירושלים "
+            f"MavatCheck: נמצאו {len(matches)} התאמות בוועדות תכנון ירושלים "
             f"– {datetime.now().strftime('%d/%m/%Y')}"
         )
         body_inner = (
-            f"<h2>נמצאו {len(matches)} התאמות בסדרי יום הוועדה המחוזית ירושלים</h2>"
-            f"<p>בבדיקה שבוצעה ב-{now} (על {plans_count} תכניות) "
-            "נמצאו התכניות הבאות בסדרי היום של 14 הימים הקרובים:</p>"
-            f"{_matches_table(matches)}"
+            f"<h2>נמצאו {len(matches)} התאמות בוועדות תכנון ירושלים</h2>"
+            f"<p>בבדיקה שבוצעה ב-{now} על {plans_count} תכניות "
+            "(ועדה מחוזית — Mavat ו-ועדה מקומית — אתר העירייה):</p>"
+            f"{errors_html}{_matches_table(matches)}"
         )
     else:
         subject = (
@@ -83,8 +106,9 @@ def send_results_email(recipient: str, matches: list[dict], plans_count: int) ->
         body_inner = (
             "<h2>הבדיקה הסתיימה — לא נמצאו התאמות</h2>"
             f"<p>בבדיקה שבוצעה ב-{now} על {plans_count} תכניות, "
-            "לא נמצאה אף תכנית בסדרי היום של הוועדה המחוזית ירושלים "
-            "ב-14 הימים הקרובים.</p>"
+            "לא נמצאה אף תכנית בסדרי היום של הוועדה המחוזית ירושלים (Mavat) "
+            "או הוועדה המקומית של עיריית ירושלים בחלון 14 יום אחורה / 30 יום קדימה.</p>"
+            f"{errors_html}"
         )
 
     _send(sender, password, recipient, subject, _wrap_html(body_inner))
