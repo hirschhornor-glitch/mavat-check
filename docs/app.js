@@ -1,5 +1,5 @@
 // Configure this to your deployed Cloudflare Worker URL.
-const WORKER_URL = "https://mavat-check-dispatcher.YOUR-SUBDOMAIN.workers.dev/";
+const WORKER_URL = "https://mavat-check-dispatcher.mavatcheck.workers.dev/";
 
 const MAX_FILE_BYTES = 40 * 1024;
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
