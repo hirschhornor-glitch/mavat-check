@@ -168,3 +168,37 @@ code {
   direction: ltr;
   display: inline-block;
 }
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+
+.checkbox-row input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+  cursor: pointer;
+}
+
+#subscribe-block[aria-disabled="true"] {
+  opacity: 0.5;
+}
+
+#subscribe-block[aria-disabled="true"] input,
+#subscribe-block[aria-disabled="true"] select {
+  pointer-events: none;
+}
+
+select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 14px;
+  font-family: inherit;
+  background: #fff;
+}

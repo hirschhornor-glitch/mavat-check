@@ -50,6 +50,24 @@
         />
       </label>
 
+      <fieldset id="subscribe-block">
+        <legend>בדיקה אוטומטית חוזרת (לא חובה)</legend>
+        <label class="checkbox-row">
+          <input type="checkbox" id="subscribe" />
+          <span>הירשם לבדיקה אוטומטית של אותו קישור</span>
+        </label>
+        <label class="field" id="frequency-field" hidden>
+          <span>תדירות</span>
+          <select id="frequency">
+            <option value="weekly">שבועית (כל יום ראשון בבוקר)</option>
+            <option value="daily">יומית (כל בוקר)</option>
+          </select>
+        </label>
+        <small id="subscribe-hint">
+          זמין רק עבור קישור — לא לקבצים.
+        </small>
+      </fieldset>
+
       <button type="submit" id="submit">שלח לבדיקה</button>
 
       <div id="status" role="status" aria-live="polite"></div>

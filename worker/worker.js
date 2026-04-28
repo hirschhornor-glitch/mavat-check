@@ -75,6 +75,34 @@ export default {
       );
     }
 
+    const subscribe = Boolean(payload.subscribe);
+    const frequency = String(payload.frequency || "").trim();
+    if (subscribe) {
+      if (!url) {
+        return jsonResponse(
+          { error: "Subscription requires a URL (cannot reschedule a file)" },
+          400,
+          origin,
+        );
+      }
+      if (frequency !== "daily" && frequency !== "weekly") {
+        return jsonResponse(
+          { error: "Invalid frequency" },
+          400,
+          origin,
+        );
+      }
+      try {
+        await addSubscription(env, { email, url, frequency });
+      } catch (e) {
+        return jsonResponse(
+          { error: "Subscription failed", detail: String(e).slice(0, 200) },
+          502,
+          origin,
+        );
+      }
+    }
+
     const clientPayload = {
       email,
       url,
@@ -111,7 +139,11 @@ export default {
     );
 
     if (ghResp.status === 204) {
-      return jsonResponse({ status: "queued" }, 200, origin);
+      return jsonResponse(
+        { status: "queued", subscribed: subscribe },
+        200,
+        origin,
+      );
     }
 
     const errorText = await ghResp.text().catch(() => "");
@@ -122,3 +154,77 @@ export default {
     );
   },
 };
+
+const SUBSCRIPTIONS_PATH = "subscriptions.json";
+
+async function addSubscription(env, { email, url, frequency }) {
+  const ghHeaders = {
+    "Authorization": `Bearer ${env.GITHUB_PAT}`,
+    "Accept": "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+    "User-Agent": "mavat-check-worker",
+  };
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const getResp = await fetch(
+      `https://api.github.com/repos/${env.GITHUB_REPO}/contents/${SUBSCRIPTIONS_PATH}`,
+      { headers: ghHeaders },
+    );
+    if (!getResp.ok) {
+      throw new Error(`Read subscriptions failed: ${getResp.status}`);
+    }
+    const fileMeta = await getResp.json();
+    const sha = fileMeta.sha;
+    const decoded = atob(fileMeta.content.replace(/\n/g, ""));
+    let subs;
+    try {
+      subs = JSON.parse(decoded);
+    } catch {
+      subs = [];
+    }
+    if (!Array.isArray(subs)) subs = [];
+
+    const exists = subs.some(
+      (s) =>
+        (s.email || "").toLowerCase() === email.toLowerCase() &&
+        (s.url || "") === url,
+    );
+    if (exists) {
+      const idx = subs.findIndex(
+        (s) =>
+          (s.email || "").toLowerCase() === email.toLowerCase() &&
+          (s.url || "") === url,
+      );
+      subs[idx].frequency = frequency;
+      subs[idx].updated = new Date().toISOString();
+    } else {
+      subs.push({
+        email,
+        url,
+        frequency,
+        added: new Date().toISOString(),
+      });
+    }
+
+    const newContent = JSON.stringify(subs, null, 2) + "\n";
+    const newContentB64 = btoa(unescape(encodeURIComponent(newContent)));
+
+    const putResp = await fetch(
+      `https://api.github.com/repos/${env.GITHUB_REPO}/contents/${SUBSCRIPTIONS_PATH}`,
+      {
+        method: "PUT",
+        headers: { ...ghHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: `Subscribe ${email} (${frequency})`,
+          content: newContentB64,
+          sha,
+        }),
+      },
+    );
+    if (putResp.ok) return;
+    if (putResp.status === 409) continue;
+    const errText = await putResp.text().catch(() => "");
+    throw new Error(`Write subscriptions failed: ${putResp.status} ${errText.slice(0, 100)}`);
+  }
+  throw new Error("Subscription write conflicts after retries");
+}

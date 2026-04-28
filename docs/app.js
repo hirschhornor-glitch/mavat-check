@@ -10,6 +10,25 @@ const urlInput = document.getElementById("url");
 const emailInput = document.getElementById("email");
 const submitBtn = document.getElementById("submit");
 const statusEl = document.getElementById("status");
+const subscribeBlock = document.getElementById("subscribe-block");
+const subscribeCheckbox = document.getElementById("subscribe");
+const frequencyField = document.getElementById("frequency-field");
+const frequencySelect = document.getElementById("frequency");
+
+function syncSubscribeState() {
+  const hasFile = !!fileInput.files[0];
+  if (hasFile) {
+    subscribeCheckbox.checked = false;
+    subscribeBlock.setAttribute("aria-disabled", "true");
+  } else {
+    subscribeBlock.removeAttribute("aria-disabled");
+  }
+  frequencyField.hidden = !subscribeCheckbox.checked;
+}
+
+fileInput.addEventListener("change", syncSubscribeState);
+subscribeCheckbox.addEventListener("change", syncSubscribeState);
+syncSubscribeState();
 
 function showStatus(message, kind) {
   statusEl.className = kind;
@@ -72,6 +91,9 @@ form.addEventListener("submit", async (e) => {
       fileName = file.name;
     }
 
+    const subscribe = !file && subscribeCheckbox.checked;
+    const frequency = subscribe ? frequencySelect.value : "";
+
     const resp = await fetch(WORKER_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -80,17 +102,21 @@ form.addEventListener("submit", async (e) => {
         url: file ? "" : url,
         file_b64: fileB64,
         file_name: fileName,
+        subscribe,
+        frequency,
       }),
     });
 
     const body = await resp.json().catch(() => ({}));
 
     if (resp.ok) {
-      showStatus(
-        "הבקשה התקבלה. סיכום יישלח אל " + email + " בעוד מספר דקות.",
-        "success",
-      );
+      const baseMsg = "הבקשה התקבלה. סיכום יישלח אל " + email + " בעוד מספר דקות.";
+      const subMsg = body.subscribed
+        ? " וגם נרשמת לבדיקה אוטומטית — תקבל הודעה לפי התדירות שבחרת."
+        : "";
+      showStatus(baseMsg + subMsg, "success");
       form.reset();
+      syncSubscribeState();
     } else {
       const parts = [body.error || `קוד ${resp.status}`];
       if (body.status) parts.push(`GitHub: ${body.status}`);
