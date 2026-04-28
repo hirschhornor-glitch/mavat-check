@@ -1,0 +1,70 @@
+name: MavatCheck
+
+on:
+  repository_dispatch:
+    types: [mavat-check]
+  workflow_dispatch:
+    inputs:
+      email:
+        description: "Recipient email"
+        required: true
+      url:
+        description: "URL with plan numbers (optional if file_b64 is provided)"
+        required: false
+        default: ""
+      file_b64:
+        description: "Base64-encoded xlsx/csv (optional if url is provided)"
+        required: false
+        default: ""
+      file_name:
+        description: "Original filename (used for type detection)"
+        required: false
+        default: ""
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      MAVATCHECK_GMAIL_USER: ${{ secrets.MAVATCHECK_GMAIL_USER }}
+      MAVATCHECK_GMAIL_APP_PASSWORD: ${{ secrets.MAVATCHECK_GMAIL_APP_PASSWORD }}
+      EMAIL: ${{ github.event.client_payload.email || inputs.email }}
+      URL: ${{ github.event.client_payload.url || inputs.url }}
+      FILE_B64: ${{ github.event.client_payload.file_b64 || inputs.file_b64 }}
+      FILE_NAME: ${{ github.event.client_payload.file_name || inputs.file_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install Playwright browsers
+        run: python -m playwright install --with-deps chromium
+
+      - name: Run MavatCheck
+        run: |
+          python scripts/check.py \
+            --email "$EMAIL" \
+            --file-b64 "$FILE_B64" \
+            --file-name "$FILE_NAME" \
+            --url "$URL"
+
+      - name: Notify on technical failure
+        if: failure()
+        env:
+          PYTHONPATH: scripts
+        run: |
+          python -c "
+          import os, sys
+          sys.path.insert(0, 'scripts')
+          from mailer import send_error_email
+          email = os.environ.get('EMAIL', '').strip()
+          if email:
+              send_error_email(email, 'שגיאה טכנית בהרצת MavatCheck. ראה לוגי GitHub Actions.')
+          "

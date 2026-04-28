@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MavatCheck — בדיקת תכניות בסדרי יום ועדה מחוזית</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main>
+    <header>
+      <h1>MavatCheck</h1>
+      <p class="lede">
+        בדוק האם תכניות מהרשימה שלך עולות לסדר היום של הוועדה המחוזית
+        ירושלים ב-14 הימים הקרובים. סיכום נשלח למייל.
+      </p>
+    </header>
+
+    <form id="form">
+      <fieldset>
+        <legend>מקור התכניות (אחד מהשניים)</legend>
+
+        <label class="field">
+          <span>קובץ Excel/CSV עם רשימת תכניות</span>
+          <input type="file" id="file" accept=".xlsx,.xls,.csv" />
+          <small>
+            עד 40KB. מספרי תכנית בפורמט <code>101-1234567</code> או entity ID.
+          </small>
+        </label>
+
+        <div class="or">או</div>
+
+        <label class="field">
+          <span>קישור לעמוד עם רשימת תכניות</span>
+          <input
+            type="url"
+            id="url"
+            placeholder="https://example.com/plans"
+          />
+        </label>
+      </fieldset>
+
+      <label class="field">
+        <span>כתובת מייל לסיכום</span>
+        <input
+          type="email"
+          id="email"
+          required
+          placeholder="you@example.com"
+        />
+      </label>
+
+      <button type="submit" id="submit">שלח לבדיקה</button>
+
+      <div id="status" role="status" aria-live="polite"></div>
+    </form>
+
+    <footer>
+      <p>
+        בודק רק את הוועדה המחוזית ירושלים, חלון של 14 יום.
+        הבדיקה רצה ב-GitHub Actions ויכולה להימשך כמה דקות.
+      </p>
+    </footer>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

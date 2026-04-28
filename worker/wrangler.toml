@@ -1,0 +1,8 @@
+name = "mavat-check-dispatcher"
+main = "worker.js"
+compatibility_date = "2025-01-01"
+
+# After deploying:
+#   npx wrangler secret put GITHUB_PAT
+#   npx wrangler secret put GITHUB_REPO     # e.g. "your-username/mavat-check"
+#   npx wrangler secret put ALLOWED_ORIGIN  # e.g. "https://your-username.github.io"
