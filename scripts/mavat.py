@@ -31,9 +31,17 @@ async def extract_plans_from_meeting_page(
     detail_page = await context.new_page()
     try:
         await detail_page.goto(detail_url, wait_until="domcontentloaded", timeout=60000)
-        await asyncio.sleep(5)
+        try:
+            await detail_page.wait_for_load_state("networkidle", timeout=20000)
+        except Exception:
+            pass
+        await asyncio.sleep(8)
 
         detail_rows = await detail_page.query_selector_all("tr")
+        log.info("  נטענו %d שורות בעמוד הישיבה", len(detail_rows))
+        if detail_rows:
+            sample = await detail_rows[0].inner_text()
+            log.info("  דוגמה משורה ראשונה: %s", sample[:160].replace("\n", " | "))
         plan_info_map: dict[str, dict] = {}
         for dr in detail_rows:
             row_text = await dr.inner_text()
