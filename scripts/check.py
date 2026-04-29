@@ -44,6 +44,12 @@ async def run(args: argparse.Namespace) -> int:
         log.error("מייל לא תקין: %s", args.email)
         return 2
 
+    log.info("=" * 60)
+    log.info("AUDIT | recipient=%s | source=%s",
+             args.email,
+             ("file:" + (args.file_name or "(unnamed)")) if args.file_b64 else ("url:" + args.url))
+    log.info("=" * 60)
+
     if not args.file_b64 and not args.url:
         send_error_email(args.email, "לא סופק קובץ ולא קישור — אין מקור לבדיקה.")
         return 2
