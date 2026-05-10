@@ -52,7 +52,7 @@ async def run(args: argparse.Namespace) -> int:
 
     if not args.file_b64 and not args.url:
         send_error_email(args.email, "לא סופק קובץ ולא קישור — אין מקור לבדיקה.")
-        return 2
+        return 0
 
     try:
         if args.file_b64:
@@ -64,11 +64,11 @@ async def run(args: argparse.Namespace) -> int:
     except Exception as e:
         log.exception("שגיאה בחילוץ תכניות מהמקור")
         send_error_email(args.email, f"שגיאה בקריאת המקור: {e}")
-        return 1
+        return 0
 
     if not plans_dict:
         send_error_email(args.email, "לא זוהו מספרי תכנית במקור שסופק.")
-        return 1
+        return 0
 
     matches: list[dict] = []
     errors: list[str] = []
@@ -94,7 +94,7 @@ async def run(args: argparse.Namespace) -> int:
             args.email,
             "שגיאה בגישה למקורות הבדיקה:\n" + "\n".join(errors),
         )
-        return 1
+        return 0
 
     seen_keys = set()
     deduped = []

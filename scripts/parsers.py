@@ -5,6 +5,7 @@ import base64
 import io
 import logging
 import re
+import urllib.request
 
 import pandas as pd
 from playwright.async_api import async_playwright
@@ -14,6 +15,9 @@ log = logging.getLogger(__name__)
 PLAN_PATTERN_FULL = re.compile(r"\d{3}-\d{7}")
 PLAN_PATTERN_ENTITY = re.compile(r"^\d{5,7}$")
 PHONE_PREFIX = re.compile(r"^(05[0-9]|07[2-7])-")
+GOOGLE_SHEETS_RE = re.compile(
+    r"https?://docs\.google\.com/spreadsheets/d/([a-zA-Z0-9_-]+)"
+)
 
 HEADER_HINTS = ("תכנית", "מספר תכנית", "plan", "agam", "entity")
 
@@ -110,8 +114,56 @@ def parse_plans_from_file(file_b64: str, filename: str) -> dict[str, str]:
     return plans
 
 
+def _try_google_sheets(url: str) -> dict[str, str] | None:
+    """If URL is a Google Sheets share link, fetch the CSV export and parse.
+    Returns None if URL is not a Google Sheet."""
+    m = GOOGLE_SHEETS_RE.search(url)
+    if not m:
+        return None
+    sheet_id = m.group(1)
+    csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
+    log.info("מזהה Google Sheets — מוריד כ-CSV: %s", csv_url)
+    try:
+        req = urllib.request.Request(
+            csv_url,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                )
+            },
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            content = resp.read()
+            content_type = resp.headers.get("Content-Type", "")
+    except Exception as e:
+        raise ValueError(
+            f"לא הצלחנו לקרוא את ה-Google Sheet. ודא שהגישה מוגדרת "
+            f"לקריאה לכל מי שיש לו את הקישור (Anyone with the link). שגיאה: {e}"
+        )
+
+    if "text/html" in content_type:
+        raise ValueError(
+            "ה-Google Sheet לא משותף לקריאה ציבורית. "
+            "פתח את הקובץ → 'Share' → 'Anyone with the link can view'."
+        )
+
+    return parse_plans_from_file(
+        base64.b64encode(content).decode(), f"{sheet_id}.csv"
+    )
+
+
 async def parse_plans_from_url(url: str) -> dict[str, str]:
-    """Scrape arbitrary URL with Playwright and extract plan numbers via regex."""
+    """Extract plan numbers from a URL.
+
+    Special-cases Google Sheets (uses CSV export). Otherwise uses Playwright
+    with domcontentloaded (avoids networkidle hang on dynamic sites)."""
+    sheets_result = _try_google_sheets(url)
+    if sheets_result is not None:
+        log.info("חולצו %d תכניות מ-Google Sheets", len(sheets_result))
+        return sheets_result
+
     log.info("טוען עמוד %s", url)
     plans: dict[str, str] = {}
 
@@ -119,8 +171,12 @@ async def parse_plans_from_url(url: str) -> dict[str, str]:
         browser = await pw.chromium.launch(headless=True)
         try:
             page = await browser.new_page()
-            await page.goto(url, wait_until="networkidle", timeout=60_000)
-            await asyncio.sleep(2)
+            await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+            try:
+                await page.wait_for_load_state("networkidle", timeout=10_000)
+            except Exception:
+                pass
+            await asyncio.sleep(3)
             html = await page.content()
         finally:
             await browser.close()
