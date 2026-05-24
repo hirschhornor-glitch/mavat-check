@@ -49,8 +49,9 @@ def _parse_pdf_for_matches(
         return matches
 
     try:
-        max_pages = min(len(doc), 10)
-        for page_num in range(max_pages):
+        # סורק את כל העמודים — בעבר היה cap של 10, אבל סדרי-יום ארוכים נחתכו.
+        # ההגנה מ-false-positives מהסעיפים המפורטים נשארת ב-early-break על "נושא מס".
+        for page_num in range(len(doc)):
             text = doc[page_num].get_text()
 
             if page_num >= 4 and re.search(r"נושא\s+מס", text):
@@ -71,12 +72,25 @@ def _parse_pdf_for_matches(
                 if not eid or eid in seen_in_pdf:
                     continue
 
+                # discussion type — looking 30 lines ahead is fine (keywords are stable)
                 lookahead = " ".join(lines[i : i + 30])
                 discussion = next(
                     (w for w in DISCUSSION_KEYWORDS if w in lookahead), ""
                 )
-                time_match = re.search(r"\b(\d{1,2}:\d{2})\b", lookahead)
-                row_time = time_match.group(1) if time_match else meeting_time
+
+                # time — prefer same line, fall back to 3 lines ahead.
+                # Avoid 30-line lookahead which would pick up the NEXT plan's time.
+                row_time = ""
+                same_line_match = re.search(r"\b(\d{1,2}:\d{2})\b", line)
+                if same_line_match:
+                    row_time = same_line_match.group(1)
+                else:
+                    short_lookahead = " ".join(lines[i : i + 3])
+                    near_match = re.search(r"\b(\d{1,2}:\d{2})\b", short_lookahead)
+                    if near_match:
+                        row_time = near_match.group(1)
+                if not row_time:
+                    row_time = meeting_time
 
                 fallback_title = re.sub(
                     r"(\d{3}-\d{5,})|(?<!\d)(\d{6,8})(?!\d)", "", line
