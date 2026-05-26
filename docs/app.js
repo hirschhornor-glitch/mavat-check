@@ -62,12 +62,12 @@ form.addEventListener("submit", async (e) => {
   const file = fileInput.files[0] || null;
 
   if (!EMAIL_RE.test(email)) {
-    showStatus("נא הזן כתובת מייל תקינה", "error");
+    showStatus("יש להזין כתובת מייל תקינה", "error");
     return;
   }
 
   if (!file && !url) {
-    showStatus("נא העלה קובץ או הזן קישור", "error");
+    showStatus("יש להעלות קובץ או להזין קישור", "error");
     return;
   }
 
@@ -118,9 +118,9 @@ form.addEventListener("submit", async (e) => {
             ? "כל בוקר"
             : "בכל יום ראשון בבוקר";
         msg =
-          "✓ נרשמת בהצלחה לבדיקה " + freqLabel + ".\n" +
+          "✓ ההרשמה הושלמה בהצלחה — בדיקה " + freqLabel + ".\n" +
           "בדיקה ראשונה תרוץ עכשיו וסיכום יישלח אל " + email + " בעוד מספר דקות. " +
-          "אחר כך תקבלי מייל אוטומטי " + nextLabel + " — גם אם לא נמצאו התאמות.";
+          "לאחר מכן יישלח מייל אוטומטי " + nextLabel + " — גם אם לא נמצאו התאמות.";
       } else {
         msg =
           "הבקשה התקבלה. סיכום יישלח אל " + email + " בעוד מספר דקות.";

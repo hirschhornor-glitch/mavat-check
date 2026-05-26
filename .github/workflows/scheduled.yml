@@ -4,6 +4,16 @@ on:
   schedule:
     - cron: "0 6 * * *"
   workflow_dispatch:
+    inputs:
+      force_email:
+        description: "Run only this email, ignoring schedule"
+        required: false
+        default: ""
+      welcome:
+        description: "Include welcome banner in the email"
+        type: boolean
+        required: false
+        default: false
 
 jobs:
   run:
@@ -12,6 +22,8 @@ jobs:
     env:
       MAVATCHECK_GMAIL_USER: ${{ secrets.MAVATCHECK_GMAIL_USER }}
       MAVATCHECK_GMAIL_APP_PASSWORD: ${{ secrets.MAVATCHECK_GMAIL_APP_PASSWORD }}
+      FORCE_EMAIL: ${{ inputs.force_email }}
+      WELCOME: ${{ inputs.welcome }}
     steps:
       - uses: actions/checkout@v4
 
@@ -28,4 +40,12 @@ jobs:
         run: python -m playwright install --with-deps chromium
 
       - name: Run scheduled subscriptions
-        run: python scripts/run_subscriptions.py
+        run: |
+          args=""
+          if [ -n "$FORCE_EMAIL" ]; then
+            args="$args --force-email \"$FORCE_EMAIL\""
+          fi
+          if [ "$WELCOME" = "true" ]; then
+            args="$args --welcome"
+          fi
+          eval python scripts/run_subscriptions.py $args

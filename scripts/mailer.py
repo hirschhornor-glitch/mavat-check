@@ -75,6 +75,7 @@ def send_results_email(
     matches: list[dict],
     plans_count: int,
     partial_errors: list[str] | None = None,
+    welcome_message: str | None = None,
 ) -> None:
     sender, password = _sender()
     now = datetime.now().strftime("%d/%m/%Y %H:%M")
@@ -88,12 +89,22 @@ def send_results_email(
             f"<ul>{errors_list}</ul></p>"
         )
 
+    welcome_html = ""
+    if welcome_message:
+        welcome_html = (
+            '<div style="background:#dbeafe;border:1px solid #93c5fd;'
+            'padding:12px 16px;border-radius:6px;margin-bottom:16px;color:#1e40af;">'
+            f"{welcome_message}"
+            "</div>"
+        )
+
     if matches:
         subject = (
             f"MavatCheck: נמצאו {len(matches)} התאמות בוועדות תכנון ירושלים "
             f"– {datetime.now().strftime('%d/%m/%Y')}"
         )
         body_inner = (
+            f"{welcome_html}"
             f"<h2>נמצאו {len(matches)} התאמות בוועדות תכנון ירושלים</h2>"
             f"<p>בבדיקה שבוצעה ב-{now} על {plans_count} תכניות "
             "(ועדה מחוזית — Mavat ו-ועדה מקומית — אתר העירייה):</p>"
@@ -104,6 +115,7 @@ def send_results_email(
             f"MavatCheck: לא נמצאו התאמות – {datetime.now().strftime('%d/%m/%Y')}"
         )
         body_inner = (
+            f"{welcome_html}"
             "<h2>הבדיקה הסתיימה — לא נמצאו התאמות</h2>"
             f"<p>בבדיקה שבוצעה ב-{now} על {plans_count} תכניות, "
             "לא נמצאה אף תכנית בסדרי היום של הוועדה המחוזית ירושלים (Mavat) "
@@ -123,7 +135,7 @@ def send_error_email(recipient: str, error_message: str) -> None:
         f"<p>בבדיקה שבוצעה ב-{now} אירעה השגיאה הבאה:</p>"
         f'<pre style="background:#fee;padding:12px;border:1px solid #fbb;'
         f'white-space:pre-wrap;">{error_message}</pre>'
-        "<p>נסה שוב או צור קשר עם תמיכה.</p>"
+        "<p>יש לנסות שוב או ליצור קשר עם תמיכה.</p>"
     )
     _send(sender, password, recipient, subject, _wrap_html(body_inner))
 

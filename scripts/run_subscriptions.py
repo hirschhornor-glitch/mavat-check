@@ -8,6 +8,7 @@ Frequencies:
 Each subscription is independent; failures are isolated and logged.
 """
 
+import argparse
 import asyncio
 import json
 import logging
@@ -43,7 +44,7 @@ def is_due(frequency: str, today: datetime) -> bool:
     return False
 
 
-async def run_one(sub: dict) -> tuple[bool, str]:
+async def run_one(sub: dict, welcome_message: str | None = None) -> tuple[bool, str]:
     email = sub.get("email", "").strip()
     url = sub.get("url", "").strip()
     if not email or not url:
@@ -89,7 +90,11 @@ async def run_one(sub: dict) -> tuple[bool, str]:
 
     try:
         send_results_email(
-            email, deduped, plans_count=len(plans_dict), partial_errors=errors
+            email,
+            deduped,
+            plans_count=len(plans_dict),
+            partial_errors=errors,
+            welcome_message=welcome_message,
         )
     except Exception as e:
         return False, f"send_email: {e}"
@@ -97,7 +102,32 @@ async def run_one(sub: dict) -> tuple[bool, str]:
     return True, f"{len(deduped)} matches"
 
 
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser()
+    p.add_argument(
+        "--force-email",
+        default="",
+        help="Run only this email, ignoring the frequency schedule.",
+    )
+    p.add_argument(
+        "--welcome",
+        action="store_true",
+        help="Include a welcome banner in the email (use with --force-email).",
+    )
+    return p.parse_args()
+
+
+WELCOME_TEXT = (
+    "<strong>ברוכים הבאים ל-MavatCheck.</strong> "
+    "ההרשמה הושלמה לבדיקה שבועית של הקישור שנשלח. "
+    "מעכשיו יישלח מייל אוטומטי <strong>בכל יום ראשון בבוקר (09:00)</strong> "
+    "עם תוצאות הבדיקה — גם בשבועות שבהם לא נמצאו תכניות התואמות."
+)
+
+
 async def main() -> int:
+    args = parse_args()
+
     if not SUBSCRIPTIONS_PATH.exists():
         log.info("subscriptions.json לא קיים — אין מנויים")
         return 0
@@ -109,25 +139,47 @@ async def main() -> int:
         return 1
 
     today = datetime.now(timezone.utc)
-    log.info("התחלת ריצה מתוזמנת — %d מנויים, יום %s",
-             len(subs), today.strftime("%A %Y-%m-%d"))
+    log.info(
+        "התחלת ריצה — %d מנויים, יום %s, force_email=%r, welcome=%s",
+        len(subs),
+        today.strftime("%A %Y-%m-%d"),
+        args.force_email,
+        args.welcome,
+    )
+
+    force_email = args.force_email.strip().lower()
+    welcome_message = WELCOME_TEXT if args.welcome else None
 
     results = []
     for sub in subs:
-        freq = sub.get("frequency", "weekly")
-        if not is_due(freq, today):
-            log.info("מדלג: %s (%s — לא היום)", sub.get("email", "?"), freq)
-            continue
+        sub_email = sub.get("email", "").strip().lower()
+
+        if force_email:
+            if sub_email != force_email:
+                continue
+        else:
+            freq = sub.get("frequency", "weekly")
+            if not is_due(freq, today):
+                log.info("מדלג: %s (%s — לא היום)", sub.get("email", "?"), freq)
+                continue
 
         log.info("מריץ: %s | %s", sub.get("email", "?"), sub.get("url", "?"))
         try:
-            ok, msg = await run_one(sub)
+            ok, msg = await run_one(sub, welcome_message=welcome_message)
             results.append((sub.get("email", "?"), ok, msg))
             log.info("  → %s | %s", "OK" if ok else "FAIL", msg)
         except Exception as e:
-            log.error("שגיאה לא צפויה ב-%s: %s\n%s",
-                      sub.get("email", "?"), e, traceback.format_exc())
+            log.error(
+                "שגיאה לא צפויה ב-%s: %s\n%s",
+                sub.get("email", "?"),
+                e,
+                traceback.format_exc(),
+            )
             results.append((sub.get("email", "?"), False, f"unexpected: {e}"))
+
+    if force_email and not results:
+        log.error("force_email=%s לא נמצא ב-subscriptions.json", force_email)
+        return 1
 
     succeeded = sum(1 for _, ok, _ in results if ok)
     log.info("סיכום: %d/%d הצליחו", succeeded, len(results))
