@@ -19,7 +19,16 @@ GOOGLE_SHEETS_RE = re.compile(
     r"https?://docs\.google\.com/spreadsheets/d/([a-zA-Z0-9_-]+)"
 )
 
-HEADER_HINTS = ("תכנית", "מספר תכנית", "plan", "agam", "entity")
+HEADER_HINTS = (
+    "מספר תכנית",
+    "מספר",
+    "תכנית",
+    "plan",
+    "agam",
+    "entity",
+)
+# Columns whose header matches these words but contain plan NAMES, not numbers.
+HEADER_BLACKLIST = ("שם", "name", "title")
 
 
 def _normalize_to_entity_id(value: str) -> str | None:
@@ -61,29 +70,62 @@ def _read_dataframe(content: bytes, filename: str) -> pd.DataFrame:
     raise ValueError(f"סוג קובץ לא נתמך: {filename}")
 
 
+def _column_plan_density(df: pd.DataFrame, idx: int) -> float:
+    """Fraction of non-empty cells in column idx that look like plan numbers."""
+    col = df.iloc[:, idx].fillna("").astype(str)
+    non_empty = [v for v in col if v.strip() and v.lower() != "nan"]
+    if not non_empty:
+        return 0.0
+    matches = sum(1 for v in non_empty if _normalize_to_entity_id(v) is not None)
+    return matches / len(non_empty)
+
+
+def _header_matches_plan_hint(col: str) -> bool:
+    s = str(col).lower()
+    if any(b in s for b in HEADER_BLACKLIST):
+        return False
+    return any(hint in s or hint in str(col) for hint in HEADER_HINTS)
+
+
 def _pick_plan_column(df: pd.DataFrame) -> int:
+    # Pass 1: header match (excluding "name"-like) AND has at least one plan ID.
     for idx, col in enumerate(df.columns):
-        col_str = str(col).lower()
-        if any(hint in col_str or hint in str(col) for hint in HEADER_HINTS):
+        if _header_matches_plan_hint(col) and _column_plan_density(df, idx) > 0:
             return idx
 
+    # Pass 2: column with the highest plan-ID density (must be > 30%).
     best_idx = -1
-    best_count = 0
-    for idx, col in enumerate(df.columns):
-        count = sum(
-            1 for v in df[col].astype(str) if _normalize_to_entity_id(v) is not None
-        )
-        if count > best_count:
-            best_count = count
+    best_density = 0.0
+    for idx in range(len(df.columns)):
+        density = _column_plan_density(df, idx)
+        if density > best_density:
+            best_density = density
             best_idx = idx
 
-    if best_count == 0:
+    if best_density < 0.3:
         raise ValueError(
-            "לא זוהתה עמודת מספרי תכנית. ודא שיש עמודה בשם 'תכנית' "
+            "לא זוהתה עמודת מספרי תכנית. ודא שיש עמודה בשם 'מספר' או 'מספר תכנית', "
             "או שהקובץ מכיל מספרי תכנית בפורמט 101-1234567 או 1234567"
         )
 
     return best_idx
+
+
+def _pick_name_column(df: pd.DataFrame, plan_col: int) -> int | None:
+    """Find a column likely to hold the plan name. Prefer header containing
+    'שם'/'name'/'title'; otherwise fall back to the column before the plan
+    column (a common layout), or the one after."""
+    for idx, col in enumerate(df.columns):
+        if idx == plan_col:
+            continue
+        col_str = str(col).lower()
+        if "שם" in str(col) or "name" in col_str or "title" in col_str:
+            return idx
+    if plan_col - 1 >= 0:
+        return plan_col - 1
+    if plan_col + 1 < len(df.columns):
+        return plan_col + 1
+    return None
 
 
 def parse_plans_from_file(file_b64: str, filename: str) -> dict[str, str]:
@@ -94,7 +136,7 @@ def parse_plans_from_file(file_b64: str, filename: str) -> dict[str, str]:
         raise ValueError("הקובץ ריק")
 
     plan_col = _pick_plan_column(df)
-    name_col = plan_col + 1 if plan_col + 1 < len(df.columns) else None
+    name_col = _pick_name_column(df, plan_col)
 
     plans: dict[str, str] = {}
     for _, row in df.iterrows():
@@ -110,7 +152,12 @@ def parse_plans_from_file(file_b64: str, filename: str) -> dict[str, str]:
     if not plans:
         raise ValueError("לא נמצאו מספרי תכנית תקינים בקובץ")
 
-    log.info("חולצו %d תכניות מהקובץ", len(plans))
+    log.info(
+        "חולצו %d תכניות מהקובץ (עמודת מספר: '%s', עמודת שם: '%s')",
+        len(plans),
+        df.columns[plan_col],
+        df.columns[name_col] if name_col is not None else "(אין)",
+    )
     return plans
 
 
