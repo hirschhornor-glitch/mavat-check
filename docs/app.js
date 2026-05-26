@@ -110,11 +110,22 @@ form.addEventListener("submit", async (e) => {
     const body = await resp.json().catch(() => ({}));
 
     if (resp.ok) {
-      const baseMsg = "הבקשה התקבלה. סיכום יישלח אל " + email + " בעוד מספר דקות.";
-      const subMsg = body.subscribed
-        ? " וגם נרשמת לבדיקה אוטומטית — תקבל הודעה לפי התדירות שבחרת."
-        : "";
-      showStatus(baseMsg + subMsg, "success");
+      let msg;
+      if (body.subscribed) {
+        const freqLabel = frequency === "daily" ? "יומית" : "שבועית";
+        const nextLabel =
+          frequency === "daily"
+            ? "כל בוקר"
+            : "בכל יום ראשון בבוקר";
+        msg =
+          "✓ נרשמת בהצלחה לבדיקה " + freqLabel + ".\n" +
+          "בדיקה ראשונה תרוץ עכשיו וסיכום יישלח אל " + email + " בעוד מספר דקות. " +
+          "אחר כך תקבלי מייל אוטומטי " + nextLabel + " — גם אם לא נמצאו התאמות.";
+      } else {
+        msg =
+          "הבקשה התקבלה. סיכום יישלח אל " + email + " בעוד מספר דקות.";
+      }
+      showStatus(msg, "success");
       form.reset();
       syncSubscribeState();
     } else {

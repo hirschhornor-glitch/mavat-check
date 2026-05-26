@@ -143,6 +143,7 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   background: var(--success-bg);
   color: var(--success);
   border: 1px solid #86efac;
+  white-space: pre-line;
 }
 
 #status.info {
