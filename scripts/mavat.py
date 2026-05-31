@@ -11,6 +11,7 @@ log = logging.getLogger(__name__)
 
 MAVAT_BASE = "https://mavat.iplan.gov.il"
 DAYS_BACK = 14
+DAYS_FORWARD = 30
 
 
 async def extract_plans_from_meeting_page(
@@ -109,6 +110,15 @@ async def fetch_meetings_via_playwright(plans_dict: dict[str, str]) -> list[dict
     url = f"{MAVAT_BASE}/SV3?searchEntity=3&searchMethod=2"
     all_matches = []
 
+    # Override the default Mavat search request so it returns meetings from
+    # DAYS_BACK days ago up to DAYS_FORWARD days ahead, not just upcoming.
+    from_date_iso = (
+        datetime.utcnow() - timedelta(days=DAYS_BACK)
+    ).replace(hour=21, minute=0, second=0, microsecond=0).isoformat(timespec="milliseconds") + "Z"
+    to_date_iso = (
+        datetime.utcnow() + timedelta(days=DAYS_FORWARD)
+    ).replace(hour=21, minute=0, second=0, microsecond=0).isoformat(timespec="milliseconds") + "Z"
+
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context(
@@ -120,6 +130,29 @@ async def fetch_meetings_via_playwright(plans_dict: dict[str, str]) -> list[dict
             ),
         )
         page = await context.new_page()
+
+        async def handle_search(route):
+            try:
+                post = route.request.post_data
+                if post:
+                    import json as _json
+                    body = _json.loads(post)
+                    body["_fromDate"] = from_date_iso
+                    body["_toDate"] = to_date_iso
+                    body["toResult"] = 200
+                    new_body = _json.dumps(body, ensure_ascii=False)
+                    await route.continue_(post_data=new_body)
+                    log.info(
+                        "Mavat search: from=%s to=%s",
+                        from_date_iso[:10],
+                        to_date_iso[:10],
+                    )
+                    return
+            except Exception as e:
+                log.warning("override search body נכשל: %s", e)
+            await route.continue_()
+
+        await page.route("**/rest/api/sv3/Search", handle_search)
 
         try:
             await page.goto(url, wait_until="networkidle", timeout=60000)
