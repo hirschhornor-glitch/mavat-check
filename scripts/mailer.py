@@ -23,13 +23,23 @@ def _sender() -> tuple[str, str]:
     return user, pwd
 
 
-def _wrap_html(body_inner: str) -> str:
+def _wrap_html(body_inner: str, unsubscribe_url: str | None = None) -> str:
+    unsubscribe_html = ""
+    if unsubscribe_url:
+        unsubscribe_html = (
+            '<p style="color:#888;font-size:12px;margin-top:8px;">'
+            'לא רוצים לקבל יותר? '
+            f'<a href="{unsubscribe_url}" style="color:#888;">לחצו כאן לביטול ההרשמה</a>'
+            "</p>"
+        )
     return (
         '<html><body dir="rtl" style="font-family:Arial,sans-serif;">'
         f"{body_inner}"
         '<p style="color:#888;font-size:12px;margin-top:24px;">'
         "הודעה זו נשלחה אוטומטית ע\"י MavatCheck"
-        "</p></body></html>"
+        "</p>"
+        f"{unsubscribe_html}"
+        "</body></html>"
     )
 
 
@@ -76,6 +86,7 @@ def send_results_email(
     plans_count: int,
     partial_errors: list[str] | None = None,
     welcome_message: str | None = None,
+    unsubscribe_url: str | None = None,
 ) -> None:
     sender, password = _sender()
     now = datetime.now().strftime("%d/%m/%Y %H:%M")
@@ -123,7 +134,13 @@ def send_results_email(
             f"{errors_html}"
         )
 
-    _send(sender, password, recipient, subject, _wrap_html(body_inner))
+    _send(
+        sender,
+        password,
+        recipient,
+        subject,
+        _wrap_html(body_inner, unsubscribe_url=unsubscribe_url),
+    )
 
 
 def send_error_email(recipient: str, error_message: str) -> None:

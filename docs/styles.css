@@ -203,3 +203,22 @@ select {
   font-family: inherit;
   background: #fff;
 }
+
+button.danger {
+  background: #b91c1c;
+}
+
+button.danger:hover:not(:disabled) {
+  background: #991b1b;
+}
+
+p.small {
+  font-size: 13px;
+  color: var(--muted);
+  text-align: center;
+  margin-top: 16px;
+}
+
+p.small a {
+  color: var(--primary);
+}

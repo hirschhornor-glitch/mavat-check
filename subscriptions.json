@@ -3,14 +3,15 @@
     "email": "urban.romema@gmail.com",
     "url": "https://docs.google.com/spreadsheets/d/1GD-aHmFSgOoInXSicJfHW8nspJtBsl2SkbDRiqctYUk/edit?usp=drivesdk",
     "frequency": "weekly",
+    "token": "c9a8cf3f-ebb3-492b-9c33-e19ca1c05acd",
     "added": "2026-05-26T07:35:00Z",
-    "updated": "2026-05-26T08:30:00Z",
-    "note": "URL corrected after 404 â previous URL had typo (QâO, 1âl)"
+    "updated": "2026-05-26T08:30:00Z"
   },
   {
     "email": "urban.plan@talpaz.org.il",
     "url": "https://armon-status-buddy.lovable.app/plans",
     "frequency": "daily",
+    "token": "a7a4dc22-7572-4e09-bc67-651c72bba34e",
     "added": "2026-06-11T12:58:18.932Z"
   }
 ]

@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ביטול הרשמה — MavatCheck</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main>
+    <header>
+      <h1>ביטול הרשמה</h1>
+    </header>
+
+    <div id="confirm-block">
+      <p class="lede">
+        ביטול הרשמה לבדיקה האוטומטית של MavatCheck.
+        לא תקבלו עוד מיילים מהמערכת.
+      </p>
+      <button type="button" id="confirm-btn" class="danger">בטלו את ההרשמה שלי</button>
+      <p class="small">
+        <a href="index.html">חזרה לעמוד הראשי</a>
+      </p>
+    </div>
+
+    <div id="status" role="status" aria-live="polite"></div>
+  </main>
+
+  <script>
+    const WORKER_URL = "https://mavat-check-dispatcher.mavatcheck.workers.dev/";
+
+    const params = new URLSearchParams(window.location.search);
+    const token = (params.get("token") || "").trim();
+
+    const confirmBlock = document.getElementById("confirm-block");
+    const confirmBtn = document.getElementById("confirm-btn");
+    const statusEl = document.getElementById("status");
+
+    function showStatus(message, kind) {
+      statusEl.className = kind;
+      statusEl.textContent = message;
+    }
+
+    if (!token) {
+      confirmBlock.style.display = "none";
+      showStatus(
+        "הקישור לא תקין — חסר טוקן. ייתכן שהמייל נחתך. נא ללחוץ על הקישור המקורי מהמייל.",
+        "error",
+      );
+    }
+
+    confirmBtn.addEventListener("click", async () => {
+      confirmBtn.disabled = true;
+      showStatus("מבטל...", "info");
+
+      try {
+        const resp = await fetch(WORKER_URL + "unsubscribe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token }),
+        });
+        const body = await resp.json().catch(() => ({}));
+
+        if (resp.ok) {
+          confirmBlock.style.display = "none";
+          const who = body.email ? ` (${body.email})` : "";
+          showStatus(
+            "✓ ההרשמה בוטלה בהצלחה" + who + ". לא יישלחו יותר מיילים. תודה.",
+            "success",
+          );
+        } else if (resp.status === 404) {
+          showStatus(
+            "ההרשמה כבר בוטלה או שהקישור לא תקין יותר.",
+            "error",
+          );
+          confirmBtn.disabled = false;
+        } else {
+          const parts = [body.error || `קוד ${resp.status}`];
+          if (body.detail) parts.push(body.detail);
+          showStatus("שגיאה: " + parts.join(" | "), "error");
+          confirmBtn.disabled = false;
+        }
+      } catch (err) {
+        showStatus("שגיאת רשת: " + err.message, "error");
+        confirmBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

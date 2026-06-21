@@ -33,6 +33,7 @@ logging.basicConfig(
 log = logging.getLogger("subscriptions")
 
 SUBSCRIPTIONS_PATH = Path(__file__).parent.parent / "subscriptions.json"
+UNSUBSCRIBE_BASE = "https://hirschhornor-glitch.github.io/mavat-check/unsubscribe.html"
 
 
 def is_due(frequency: str, today: datetime) -> bool:
@@ -88,6 +89,9 @@ async def run_one(sub: dict, welcome_message: str | None = None) -> tuple[bool, 
         seen.add(key)
         deduped.append(m)
 
+    token = sub.get("token", "")
+    unsubscribe_url = f"{UNSUBSCRIBE_BASE}?token={token}" if token else None
+
     try:
         send_results_email(
             email,
@@ -95,6 +99,7 @@ async def run_one(sub: dict, welcome_message: str | None = None) -> tuple[bool, 
             plans_count=len(plans_dict),
             partial_errors=errors,
             welcome_message=welcome_message,
+            unsubscribe_url=unsubscribe_url,
         )
     except Exception as e:
         return False, f"send_email: {e}"
