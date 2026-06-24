@@ -37,7 +37,19 @@ jobs:
           pip install -r requirements.txt
 
       - name: Install Playwright browsers
-        run: python -m playwright install --with-deps chromium
+        run: |
+          # Drop the google-chrome apt source: playwright ships its own chromium
+          # and never needs it, but --with-deps runs `apt-get update` across all
+          # sources, which fails (exit 100) whenever Google's mirror is mid-sync
+          # ("File has unexpected size … Mirror sync in progress?"). Removing it
+          # avoids that flaky dependency entirely; the retry covers other blips.
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list || true
+          for i in 1 2 3; do
+            python -m playwright install --with-deps chromium && exit 0
+            echo "playwright install failed (attempt $i) — retrying in 20s…"
+            sleep 20
+          done
+          python -m playwright install --with-deps chromium
 
       - name: Run scheduled subscriptions
         run: |
