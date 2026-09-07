@@ -1,0 +1,24 @@
+name: heartbeat
+
+on:
+  schedule:
+    # 1st and 15th of every month at 05:00 UTC.
+    # Two runs per month keep the 60-day inactivity timer far from the limit,
+    # even if one run is skipped by GitHub.
+    - cron: '0 5 1,15 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Push empty commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit --allow-empty -m "heartbeat: keep scheduled workflows active"
+          git push
