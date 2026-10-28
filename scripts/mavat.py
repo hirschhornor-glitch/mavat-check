@@ -1,17 +1,45 @@
-"""Scrape Jerusalem district committee meetings from Mavat and match plan numbers."""
+"""Scrape Jerusalem district committee meetings from Mavat and match plan numbers.
+
+Primary path: download each meeting's agenda PDF (סדר יום) via a Playwright popup,
+parse it with pdfplumber to extract plan + purpose (מטרת הדיון) + per-plan time.
+Fallback: scrape the SV4 meeting detail page (no purpose available there).
+"""
 
 import asyncio
 import logging
+import os
 import re
+import tempfile
 from datetime import datetime, timedelta
 
 from playwright.async_api import async_playwright
+
+from agenda_pdf import download_agenda_pdf, parse_pdf_agenda
 
 log = logging.getLogger(__name__)
 
 MAVAT_BASE = "https://mavat.iplan.gov.il"
 DAYS_BACK = 14
 DAYS_FORWARD = 30
+NO_PDF_PURPOSE = ""  # left blank in the email table when the agenda PDF was unavailable
+
+
+def _plans_dict_matches(plan_number: str, plans_dict: dict[str, str]) -> tuple[str, str] | None:
+    """Return (eid, saved_plan_name) if plan_number '101-1382423' matches a key
+    in plans_dict (which is keyed on bare entity ids like '1382423').
+    """
+    # Suffix of a '101-1382423' = '1382423', strip leading zeros to match parsers.py normalization.
+    m = re.match(r"\d{3}-(\d{7})$", plan_number)
+    if m:
+        suffix = m.group(1).lstrip("0") or "0"
+        if suffix in plans_dict:
+            return suffix, plans_dict[suffix]
+    # Also allow direct containment (same logic as the old scraper did).
+    for eid, name in plans_dict.items():
+        padded = eid.zfill(7)
+        if plan_number.endswith(padded) or eid in plan_number:
+            return eid, name
+    return None
 
 
 async def extract_plans_from_meeting_page(
@@ -21,6 +49,7 @@ async def extract_plans_from_meeting_page(
     meeting_id: str,
     meeting_date: str,
 ) -> list[dict]:
+    """Fallback used when the agenda PDF couldn't be opened. No purpose column."""
     matches = []
     detail_url = (
         f"{MAVAT_BASE}{detail_href}"
@@ -40,9 +69,6 @@ async def extract_plans_from_meeting_page(
 
         detail_rows = await detail_page.query_selector_all("tr")
         log.info("  נטענו %d שורות בעמוד הישיבה", len(detail_rows))
-        if detail_rows:
-            sample = await detail_rows[0].inner_text()
-            log.info("  דוגמה משורה ראשונה: %s", sample[:160].replace("\n", " | "))
         plan_info_map: dict[str, dict] = {}
         for dr in detail_rows:
             row_text = await dr.inner_text()
@@ -62,9 +88,7 @@ async def extract_plans_from_meeting_page(
             if time_match:
                 cleaned = cleaned.replace(time_match.group(0), "")
             cleaned = re.sub(r"^\s*\d+\.?\s*", "", cleaned, flags=re.MULTILINE)
-            candidate_lines = [
-                l.strip() for l in cleaned.splitlines() if l.strip()
-            ]
+            candidate_lines = [l.strip() for l in cleaned.splitlines() if l.strip()]
             title = max(candidate_lines, key=len) if candidate_lines else ""
 
             for pn in plan_nums_in_row:
@@ -73,29 +97,27 @@ async def extract_plans_from_meeting_page(
 
         log.info("  נמצאו %d מספרי תכנית בסעיפי ישיבה", len(plan_info_map))
 
-        for eid, plan_name in plans_dict.items():
-            padded = eid.zfill(7)
-            for plan_num, info in plan_info_map.items():
-                if plan_num.endswith(padded) or eid in plan_num:
-                    final_name = plan_name or info.get("title", "")
-                    log.info(
-                        "    התאמה: entity %s → %s בשעה %s | %s",
-                        eid,
-                        plan_num,
-                        info.get("time") or "?",
-                        final_name or "(ללא שם)",
-                    )
-                    matches.append(
-                        {
-                            "plan": plan_num,
-                            "plan_name": final_name,
-                            "meeting_title": f"ועדה מחוזית ירושלים {meeting_id}",
-                            "meeting_date": meeting_date,
-                            "meeting_time": info.get("time", ""),
-                            "detail_url": detail_url,
-                        }
-                    )
-                    break
+        for plan_num, info in plan_info_map.items():
+            hit = _plans_dict_matches(plan_num, plans_dict)
+            if not hit:
+                continue
+            eid, saved_name = hit
+            final_name = saved_name or info.get("title", "")
+            log.info(
+                "    התאמה: entity %s → %s בשעה %s | %s",
+                eid, plan_num, info.get("time") or "?", final_name or "(ללא שם)",
+            )
+            matches.append(
+                {
+                    "plan": plan_num,
+                    "plan_name": final_name,
+                    "purpose": NO_PDF_PURPOSE,
+                    "meeting_title": f"ועדה מחוזית ירושלים {meeting_id}",
+                    "meeting_date": meeting_date,
+                    "meeting_time": info.get("time", ""),
+                    "detail_url": detail_url,
+                }
+            )
 
     except Exception as e:
         log.warning("  שגיאה בעמוד פרטי ישיבה %s: %s", meeting_id, e)
@@ -105,10 +127,72 @@ async def extract_plans_from_meeting_page(
     return matches
 
 
+async def extract_plans_from_agenda_pdf(
+    context,
+    row,
+    plans_dict: dict[str, str],
+    meeting_id: str,
+    meeting_date: str,
+    detail_url: str,
+    tmp_dir: str,
+) -> list[dict] | None:
+    """Try to download+parse the agenda PDF. Returns matches list, or None if
+    the PDF path was unavailable (caller should fall back to the detail page).
+    An empty list means PDF parsed fine but none of our plans were on the agenda.
+    """
+    pdf_trigger = row.locator(
+        'img[alt="ראה קובץ בפורמט PDF"], img[title*="PDF"], .clickable'
+    ).first
+    if await pdf_trigger.count() == 0:
+        return None
+
+    pdf_path = os.path.join(tmp_dir, f"{meeting_id}.pdf")
+    ok = await download_agenda_pdf(context, pdf_trigger, pdf_path)
+    if not ok:
+        return None
+
+    plan_info = parse_pdf_agenda(pdf_path)
+    try:
+        os.remove(pdf_path)
+    except OSError:
+        pass
+
+    if not plan_info:
+        # The PDF opened but didn't contain the expected columns (e.g. a scanned
+        # agenda). Treat this as "no PDF-level purpose" and fall back so we at
+        # least report the plan without a purpose.
+        return None
+
+    matches = []
+    for plan_num, info in plan_info.items():
+        hit = _plans_dict_matches(plan_num, plans_dict)
+        if not hit:
+            continue
+        eid, saved_name = hit
+        final_name = saved_name or info.get("name") or ""
+        log.info(
+            "    התאמה (PDF): entity %s → %s בשעה %s | מטרה: %s",
+            eid, plan_num, info.get("time") or "?", info.get("purpose") or "(ריק)",
+        )
+        matches.append(
+            {
+                "plan": plan_num,
+                "plan_name": final_name,
+                "purpose": info.get("purpose", ""),
+                "meeting_title": f"ועדה מחוזית ירושלים {meeting_id}",
+                "meeting_date": meeting_date,
+                "meeting_time": info.get("time", ""),
+                "detail_url": detail_url,
+            }
+        )
+    return matches
+
+
 async def fetch_meetings_via_playwright(plans_dict: dict[str, str]) -> list[dict]:
     log.info("משתמש ב-Playwright לניווט ב-mavat")
     url = f"{MAVAT_BASE}/SV3?searchEntity=3&searchMethod=2"
     all_matches = []
+    tmp_dir = tempfile.mkdtemp(prefix="mavat_agenda_")
 
     # Override the default Mavat search request so it returns meetings from
     # DAYS_BACK days ago up to DAYS_FORWARD days ahead, not just upcoming.
@@ -144,8 +228,7 @@ async def fetch_meetings_via_playwright(plans_dict: dict[str, str]) -> list[dict
                     await route.continue_(post_data=new_body)
                     log.info(
                         "Mavat search: from=%s to=%s",
-                        from_date_iso[:10],
-                        to_date_iso[:10],
+                        from_date_iso[:10], to_date_iso[:10],
                     )
                     return
             except Exception as e:
@@ -168,14 +251,13 @@ async def fetch_meetings_via_playwright(plans_dict: dict[str, str]) -> list[dict
 
             try:
                 machuz_inputs = page.locator('input[name="מחוז"][role="searchbox"]')
-                count = await machuz_inputs.count()
+                mcount = await machuz_inputs.count()
                 machuz_input = None
-                for idx in range(count):
+                for idx in range(mcount):
                     el = machuz_inputs.nth(idx)
                     if await el.is_visible():
                         machuz_input = el
                         break
-
                 if machuz_input:
                     await machuz_input.click()
                     await machuz_input.press_sequentially("ירושלים", delay=100)
@@ -226,7 +308,6 @@ async def fetch_meetings_via_playwright(plans_dict: dict[str, str]) -> list[dict
                 row_text = await row.inner_text()
                 meeting_id = "Unknown"
                 meeting_date = "Unknown"
-
                 id_match = re.search(r"202\d{4}", row_text)
                 if id_match:
                     meeting_id = id_match.group(0)
@@ -248,8 +329,24 @@ async def fetch_meetings_via_playwright(plans_dict: dict[str, str]) -> list[dict
                 detail_href = ""
                 if await detail_link.count() > 0:
                     detail_href = await detail_link.get_attribute("href") or ""
+                detail_url = (
+                    f"{MAVAT_BASE}{detail_href}"
+                    if detail_href and not detail_href.startswith("http")
+                    else detail_href
+                )
 
+                # Try PDF first — it's the only path that yields מטרת הדיון.
+                pdf_matches = await extract_plans_from_agenda_pdf(
+                    context, row, plans_dict, meeting_id, meeting_date, detail_url, tmp_dir
+                )
+                if pdf_matches is not None:
+                    all_matches.extend(pdf_matches)
+                    log.info("  PDF: %d התאמות", len(pdf_matches))
+                    continue
+
+                # PDF unavailable — fall back to the detail-page scrape (no purpose).
                 if detail_href:
+                    log.info("  PDF לא זמין — נופל לעמוד פרטי ישיבה")
                     found = await extract_plans_from_meeting_page(
                         context, detail_href, plans_dict, meeting_id, meeting_date
                     )
@@ -259,6 +356,10 @@ async def fetch_meetings_via_playwright(plans_dict: dict[str, str]) -> list[dict
             log.error("שגיאה כללית ב-Playwright: %s", e)
         finally:
             await browser.close()
+            try:
+                os.rmdir(tmp_dir)
+            except OSError:
+                pass
 
     log.info("Playwright מצא %d התאמות", len(all_matches))
     return all_matches

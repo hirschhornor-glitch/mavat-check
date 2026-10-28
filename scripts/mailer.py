@@ -55,11 +55,13 @@ def _matches_table(matches: list[dict]) -> str:
         detail_url = m.get("detail_url", "")
         link_html = f'<a href="{detail_url}">קישור</a>' if detail_url else "-"
         source_label = SOURCE_LABELS.get(m.get("source", "mavat"), m.get("source", ""))
+        purpose = (m.get("purpose") or "").strip() or "—"
         rows += (
             "<tr>"
             f'<td style="padding:8px;border:1px solid #ddd;">{source_label}</td>'
             f'<td style="padding:8px;border:1px solid #ddd;">{m["plan"]}</td>'
             f'<td style="padding:8px;border:1px solid #ddd;">{m.get("plan_name", "")}</td>'
+            f'<td style="padding:8px;border:1px solid #ddd;">{purpose}</td>'
             f'<td style="padding:8px;border:1px solid #ddd;">{m["meeting_title"]}</td>'
             f'<td style="padding:8px;border:1px solid #ddd;">{m["meeting_date"]}</td>'
             f'<td style="padding:8px;border:1px solid #ddd;">{m.get("meeting_time", "")}</td>'
@@ -72,6 +74,7 @@ def _matches_table(matches: list[dict]) -> str:
         '<th style="padding:8px;border:1px solid #ddd;">מקור</th>'
         '<th style="padding:8px;border:1px solid #ddd;">מספר תכנית</th>'
         '<th style="padding:8px;border:1px solid #ddd;">שם התכנית</th>'
+        '<th style="padding:8px;border:1px solid #ddd;">מטרת הדיון</th>'
         '<th style="padding:8px;border:1px solid #ddd;">ישיבה</th>'
         '<th style="padding:8px;border:1px solid #ddd;">תאריך</th>'
         '<th style="padding:8px;border:1px solid #ddd;">שעה</th>'
