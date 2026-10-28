@@ -1,8 +1,15 @@
 """Download and parse Mavat agenda PDFs (סדר יום) to extract 'מטרת הדיון' per plan.
 
 The purpose column exists only in the agenda PDF, not in Mavat's SV4 web view
-(ported from Oranim's process_mavat_meetings.py). Clicking the PDF icon opens
-a Chromium popup with a blob: URL; we read the blob through the popup and save it.
+(ported from Oranim's process_mavat_meetings.py).
+
+Live inspection of SV3 showed the PDF click triggers a REST call to
+/rest/api/Attacments/?eid=…&fn=<meeting_id>_סדר יום.pdf, then wraps the
+response bytes in a Blob and calls window.open(blob_url). In headless
+Chromium the popup opens unreliably (user-activation quirks), so we skip
+the popup entirely: register a context-wide response listener BEFORE the
+click, grab the response body directly when it arrives, and never need the
+blob URL.
 """
 
 import asyncio
@@ -63,58 +70,82 @@ def fix_purpose_word_order(text: str) -> str:
     return result.strip()
 
 
+_AGENDA_URL_RE = re.compile(
+    r"/rest/api/Attacments/.*?(?:%D7%A1%D7%93%D7%A8|סדר).*?%D7%99%D7%95%D7%9D|"
+    r"/rest/api/Attacments/.*?סדר יום",
+    re.IGNORECASE,
+)
+
+
+def _is_agenda_response(url: str, meeting_id: str) -> bool:
+    """Match the Attacments response for THIS meeting's agenda PDF."""
+    if "/rest/api/Attacments" not in url:
+        return False
+    if meeting_id and meeting_id not in url:
+        return False
+    # Encoded or raw Hebrew for "סדר יום"
+    return (
+        "%D7%A1%D7%93%D7%A8" in url  # ס ד ר
+        or "סדר" in url
+        or f"{meeting_id}_" in url  # the agenda is always this meeting's _סדר יום.pdf
+    )
+
+
 async def download_agenda_pdf(
-    context: Any, pdf_trigger: Any, out_path: str, timeout_ms: int = 15_000
+    context: Any,
+    pdf_trigger: Any,
+    out_path: str,
+    meeting_id: str = "",
+    timeout_ms: int = 15_000,
 ) -> bool:
-    """Click the agenda PDF icon, catch the resulting popup, save blob to out_path.
+    """Click the agenda PDF icon, intercept the REST response, save body to out_path.
 
-    Returns True if a PDF was saved, False otherwise. Never raises — the caller
-    falls back to the SV4 detail-page scrape when this returns False.
+    Does NOT rely on a popup opening — in headless Chromium the popup fires
+    unreliably due to user-activation quirks. Instead we register a context
+    response listener before the click, grab the first response matching this
+    meeting's /rest/api/Attacments URL, and read its body directly.
 
-    Timeout tuned from live SV3 testing: Mavat generates the PDF server-side
-    and calls window.open(blob:…) only after the fetch returns — observed at
-    6-7s on a warm cache. 15s gives a safety margin for headless/cold starts
-    while still fitting inside the 60s per-meeting budget.
+    Returns True if a PDF was saved, False otherwise. Never raises.
     """
-    popup = None
-    try:
-        async with context.expect_page(timeout=timeout_ms) as popup_info:
-            await pdf_trigger.click()
-        popup = await popup_info.value
+    loop = asyncio.get_running_loop()
+    pdf_future: asyncio.Future = loop.create_future()
+
+    def on_response(resp):
+        if pdf_future.done():
+            return
         try:
-            await popup.wait_for_load_state("domcontentloaded", timeout=8_000)
+            if _is_agenda_response(resp.url, meeting_id):
+                pdf_future.set_result(resp)
         except Exception:
             pass
-        await asyncio.sleep(3)  # let the blob URL become readable
 
-        blob_url = popup.url
-        if not blob_url.startswith("blob:"):
-            log.warning("agenda popup URL isn't a blob: %s", blob_url[:80])
+    context.on("response", on_response)
+    try:
+        try:
+            await pdf_trigger.click()
+        except Exception as e:
+            log.warning("agenda PDF click failed for %s: %s", meeting_id, e)
             return False
-
-        b64 = await popup.evaluate(
-            """async (url) => {
-                const res = await fetch(url);
-                const b = await res.blob();
-                return new Promise(r => {
-                    const reader = new FileReader();
-                    reader.onloadend = () => r(reader.result.split(',')[1]);
-                    reader.readAsDataURL(b);
-                });
-            }""",
-            blob_url,
-        )
+        try:
+            resp = await asyncio.wait_for(pdf_future, timeout=timeout_ms / 1000)
+        except asyncio.TimeoutError:
+            log.warning("no agenda response within %dms for %s", timeout_ms, meeting_id)
+            return False
+        try:
+            body = await resp.body()
+        except Exception as e:
+            log.warning("agenda response body read failed for %s: %s", meeting_id, e)
+            return False
+        if not body or len(body) < 500:
+            log.warning("agenda response too small (%d bytes) for %s", len(body or b""), meeting_id)
+            return False
         os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
         with open(out_path, "wb") as f:
-            f.write(base64.b64decode(b64))
+            f.write(body)
         return True
-    except Exception as e:
-        log.warning("agenda PDF download failed: %s", e)
-        return False
     finally:
         try:
-            if popup is not None:
-                await popup.close()
+            context.remove_listener("response", on_response)
         except Exception:
             pass
 

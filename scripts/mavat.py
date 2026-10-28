@@ -191,7 +191,7 @@ async def extract_plans_from_agenda_pdf(
         return None
 
     pdf_path = os.path.join(tmp_dir, f"{meeting_id}.pdf")
-    ok = await download_agenda_pdf(context, pdf_trigger, pdf_path)
+    ok = await download_agenda_pdf(context, pdf_trigger, pdf_path, meeting_id=meeting_id)
     if not ok:
         _PDF_DIAG["pdf_click_failed"] += 1
         return None
