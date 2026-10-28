@@ -175,8 +175,15 @@ async def extract_plans_from_agenda_pdf(
     the PDF path was unavailable (caller should fall back to the detail page).
     An empty list means PDF parsed fine but none of our plans were on the agenda.
     """
+    # Live SV3 inspection: the Angular click handler lives on the .clickable
+    # DIV that wraps the img, not the img itself. Clicking the raw img fires
+    # the handler via event bubbling in a real browser but not reliably in
+    # Playwright headless. Target the wrapping DIV first; keep the raw img as
+    # a last-resort fallback.
     pdf_trigger = row.locator(
-        'img[alt="ראה קובץ בפורמט PDF"], img[title*="PDF"], .clickable'
+        '.clickable:has(img[alt="ראה קובץ בפורמט PDF"]), '
+        '.clickable:has(img[title*="PDF"]), '
+        'img[alt="ראה קובץ בפורמט PDF"]'
     ).first
     trigger_count = await pdf_trigger.count()
     if trigger_count == 0:

@@ -64,14 +64,17 @@ def fix_purpose_word_order(text: str) -> str:
 
 
 async def download_agenda_pdf(
-    context: Any, pdf_trigger: Any, out_path: str, timeout_ms: int = 8_000
+    context: Any, pdf_trigger: Any, out_path: str, timeout_ms: int = 15_000
 ) -> bool:
     """Click the agenda PDF icon, catch the resulting popup, save blob to out_path.
 
     Returns True if a PDF was saved, False otherwise. Never raises — the caller
     falls back to the SV4 detail-page scrape when this returns False.
-    Timeouts are kept tight because this runs inside a 20-min GitHub Actions
-    budget and most Jerusalem committee rows do open a popup within a few seconds.
+
+    Timeout tuned from live SV3 testing: Mavat generates the PDF server-side
+    and calls window.open(blob:…) only after the fetch returns — observed at
+    6-7s on a warm cache. 15s gives a safety margin for headless/cold starts
+    while still fitting inside the 60s per-meeting budget.
     """
     popup = None
     try:
@@ -79,10 +82,10 @@ async def download_agenda_pdf(
             await pdf_trigger.click()
         popup = await popup_info.value
         try:
-            await popup.wait_for_load_state("domcontentloaded", timeout=5_000)
+            await popup.wait_for_load_state("domcontentloaded", timeout=8_000)
         except Exception:
             pass
-        await asyncio.sleep(2)  # let the blob URL become readable
+        await asyncio.sleep(3)  # let the blob URL become readable
 
         blob_url = popup.url
         if not blob_url.startswith("blob:"):
