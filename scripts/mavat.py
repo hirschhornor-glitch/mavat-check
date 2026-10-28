@@ -28,6 +28,36 @@ NO_PDF_PURPOSE = ""  # left blank in the email table when the agenda PDF was una
 MEETING_LOOP_BUDGET_SEC = 15 * 60
 PER_MEETING_BUDGET_SEC = 60
 
+# Module-level diagnostics so callers can surface PDF-path health in the email.
+# Reset at the start of each fetch_meetings_via_playwright run.
+_PDF_DIAG = {
+    "meetings_seen": 0,
+    "pdf_trigger_missing": 0,
+    "pdf_click_failed": 0,
+    "pdf_empty_parse": 0,
+    "pdf_matched": 0,
+    "fallback_used": 0,
+    "fallback_matched": 0,
+    "meeting_timeout": 0,
+    "skipped_over_budget": 0,
+}
+
+
+def get_pdf_diagnostics() -> dict:
+    return dict(_PDF_DIAG)
+
+
+def format_pdf_diagnostics() -> str:
+    d = _PDF_DIAG
+    return (
+        f"PDF path: {d['pdf_matched']}/{d['meetings_seen']} ישיבות הניבו purpose; "
+        f"ללא אייקון={d['pdf_trigger_missing']}, "
+        f"קליק נכשל={d['pdf_click_failed']}, "
+        f"פרסינג ריק={d['pdf_empty_parse']}, "
+        f"fallback שימש={d['fallback_used']} (מהם התאימו {d['fallback_matched']}), "
+        f"timeout={d['meeting_timeout']}, חרגו מתקציב={d['skipped_over_budget']}"
+    )
+
 
 def _plans_dict_matches(plan_number: str, plans_dict: dict[str, str]) -> tuple[str, str] | None:
     """Return (eid, saved_plan_name) if plan_number '101-1382423' matches a key
@@ -148,12 +178,15 @@ async def extract_plans_from_agenda_pdf(
     pdf_trigger = row.locator(
         'img[alt="ראה קובץ בפורמט PDF"], img[title*="PDF"], .clickable'
     ).first
-    if await pdf_trigger.count() == 0:
+    trigger_count = await pdf_trigger.count()
+    if trigger_count == 0:
+        _PDF_DIAG["pdf_trigger_missing"] += 1
         return None
 
     pdf_path = os.path.join(tmp_dir, f"{meeting_id}.pdf")
     ok = await download_agenda_pdf(context, pdf_trigger, pdf_path)
     if not ok:
+        _PDF_DIAG["pdf_click_failed"] += 1
         return None
 
     plan_info = parse_pdf_agenda(pdf_path)
@@ -163,10 +196,10 @@ async def extract_plans_from_agenda_pdf(
         pass
 
     if not plan_info:
-        # The PDF opened but didn't contain the expected columns (e.g. a scanned
-        # agenda). Treat this as "no PDF-level purpose" and fall back so we at
-        # least report the plan without a purpose.
+        _PDF_DIAG["pdf_empty_parse"] += 1
         return None
+
+    _PDF_DIAG["pdf_matched"] += 1
 
     matches = []
     for plan_num, info in plan_info.items():
@@ -198,6 +231,8 @@ async def fetch_meetings_via_playwright(plans_dict: dict[str, str]) -> list[dict
     url = f"{MAVAT_BASE}/SV3?searchEntity=3&searchMethod=2"
     all_matches = []
     tmp_dir = tempfile.mkdtemp(prefix="mavat_agenda_")
+    for k in _PDF_DIAG:
+        _PDF_DIAG[k] = 0
 
     # Override the default Mavat search request so it returns meetings from
     # DAYS_BACK days ago up to DAYS_FORWARD days ahead, not just upcoming.
@@ -308,14 +343,13 @@ async def fetch_meetings_via_playwright(plans_dict: dict[str, str]) -> list[dict
 
             cutoff = datetime.now() - timedelta(days=DAYS_BACK)
             loop_started = time.monotonic()
-            skipped_over_budget = 0
 
             for i in range(count):
                 if time.monotonic() - loop_started > MEETING_LOOP_BUDGET_SEC:
-                    skipped_over_budget = count - i
+                    _PDF_DIAG["skipped_over_budget"] = count - i
                     log.warning(
                         "חרגנו מתקציב הישיבות (%ds). מדלגים על %d ישיבות נותרות.",
-                        MEETING_LOOP_BUDGET_SEC, skipped_over_budget,
+                        MEETING_LOOP_BUDGET_SEC, count - i,
                     )
                     break
 
@@ -339,6 +373,7 @@ async def fetch_meetings_via_playwright(plans_dict: dict[str, str]) -> list[dict
                         pass
 
                 log.info("בודק ישיבה %s (%s)...", meeting_id, meeting_date)
+                _PDF_DIAG["meetings_seen"] += 1
 
                 detail_link = row.locator('a[href*="/SV4/3/"]').first
                 detail_href = ""
@@ -367,6 +402,7 @@ async def fetch_meetings_via_playwright(plans_dict: dict[str, str]) -> list[dict
                     # PDF unavailable — fall back to the detail-page scrape (no purpose).
                     if detail_href:
                         log.info("  PDF לא זמין — נופל לעמוד פרטי ישיבה")
+                        _PDF_DIAG["fallback_used"] += 1
                         found = await asyncio.wait_for(
                             extract_plans_from_meeting_page(
                                 context, detail_href, plans_dict,
@@ -374,8 +410,10 @@ async def fetch_meetings_via_playwright(plans_dict: dict[str, str]) -> list[dict
                             ),
                             timeout=PER_MEETING_BUDGET_SEC,
                         )
+                        _PDF_DIAG["fallback_matched"] += len(found)
                         all_matches.extend(found)
                 except asyncio.TimeoutError:
+                    _PDF_DIAG["meeting_timeout"] += 1
                     log.warning(
                         "ישיבה %s חרגה מ-%ds — מדלגים.",
                         meeting_id, PER_MEETING_BUDGET_SEC,

@@ -14,7 +14,7 @@ import traceback
 
 from city import fetch_city_meetings
 from mailer import send_error_email, send_results_email
-from mavat import fetch_meetings_via_playwright
+from mavat import fetch_meetings_via_playwright, format_pdf_diagnostics
 from parsers import parse_plans_from_file, parse_plans_from_url
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -78,6 +78,7 @@ async def run(args: argparse.Namespace) -> int:
         for m in mavat_matches:
             m.setdefault("source", "mavat")
         matches.extend(mavat_matches)
+        errors.append(f"אבחון Mavat: {format_pdf_diagnostics()}")
     except Exception as e:
         log.exception("שגיאה בגישה ל-Mavat")
         errors.append(f"Mavat: {e}")
