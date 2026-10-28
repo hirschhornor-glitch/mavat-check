@@ -438,4 +438,5 @@ async def fetch_meetings_via_playwright(plans_dict: dict[str, str]) -> list[dict
                 pass
 
     log.info("Playwright מצא %d התאמות", len(all_matches))
+    log.info("אבחון PDF path: %s", format_pdf_diagnostics())
     return all_matches
