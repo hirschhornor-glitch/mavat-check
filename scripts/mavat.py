@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import tempfile
+import time
 from datetime import datetime, timedelta
 
 from playwright.async_api import async_playwright
@@ -22,6 +23,10 @@ MAVAT_BASE = "https://mavat.iplan.gov.il"
 DAYS_BACK = 14
 DAYS_FORWARD = 30
 NO_PDF_PURPOSE = ""  # left blank in the email table when the agenda PDF was unavailable
+# GitHub Actions caps check.yml at 20 min. Leave 3 min slack for mail+teardown.
+# Per-meeting cap keeps a single stuck meeting from eating the whole run.
+MEETING_LOOP_BUDGET_SEC = 15 * 60
+PER_MEETING_BUDGET_SEC = 60
 
 
 def _plans_dict_matches(plan_number: str, plans_dict: dict[str, str]) -> tuple[str, str] | None:
@@ -60,12 +65,12 @@ async def extract_plans_from_meeting_page(
 
     detail_page = await context.new_page()
     try:
-        await detail_page.goto(detail_url, wait_until="domcontentloaded", timeout=60000)
+        await detail_page.goto(detail_url, wait_until="domcontentloaded", timeout=30000)
         try:
-            await detail_page.wait_for_load_state("networkidle", timeout=20000)
+            await detail_page.wait_for_load_state("networkidle", timeout=8000)
         except Exception:
             pass
-        await asyncio.sleep(8)
+        await asyncio.sleep(3)
 
         detail_rows = await detail_page.query_selector_all("tr")
         log.info("  נטענו %d שורות בעמוד הישיבה", len(detail_rows))
@@ -302,8 +307,18 @@ async def fetch_meetings_via_playwright(plans_dict: dict[str, str]) -> list[dict
             log.info("נמצאו %d שורות ירושלים", count)
 
             cutoff = datetime.now() - timedelta(days=DAYS_BACK)
+            loop_started = time.monotonic()
+            skipped_over_budget = 0
 
             for i in range(count):
+                if time.monotonic() - loop_started > MEETING_LOOP_BUDGET_SEC:
+                    skipped_over_budget = count - i
+                    log.warning(
+                        "חרגנו מתקציב הישיבות (%ds). מדלגים על %d ישיבות נותרות.",
+                        MEETING_LOOP_BUDGET_SEC, skipped_over_budget,
+                    )
+                    break
+
                 row = rows.nth(i)
                 row_text = await row.inner_text()
                 meeting_id = "Unknown"
@@ -335,22 +350,38 @@ async def fetch_meetings_via_playwright(plans_dict: dict[str, str]) -> list[dict
                     else detail_href
                 )
 
-                # Try PDF first — it's the only path that yields מטרת הדיון.
-                pdf_matches = await extract_plans_from_agenda_pdf(
-                    context, row, plans_dict, meeting_id, meeting_date, detail_url, tmp_dir
-                )
-                if pdf_matches is not None:
-                    all_matches.extend(pdf_matches)
-                    log.info("  PDF: %d התאמות", len(pdf_matches))
-                    continue
-
-                # PDF unavailable — fall back to the detail-page scrape (no purpose).
-                if detail_href:
-                    log.info("  PDF לא זמין — נופל לעמוד פרטי ישיבה")
-                    found = await extract_plans_from_meeting_page(
-                        context, detail_href, plans_dict, meeting_id, meeting_date
+                try:
+                    # Try PDF first — it's the only path that yields מטרת הדיון.
+                    pdf_matches = await asyncio.wait_for(
+                        extract_plans_from_agenda_pdf(
+                            context, row, plans_dict, meeting_id, meeting_date,
+                            detail_url, tmp_dir,
+                        ),
+                        timeout=PER_MEETING_BUDGET_SEC,
                     )
-                    all_matches.extend(found)
+                    if pdf_matches is not None:
+                        all_matches.extend(pdf_matches)
+                        log.info("  PDF: %d התאמות", len(pdf_matches))
+                        continue
+
+                    # PDF unavailable — fall back to the detail-page scrape (no purpose).
+                    if detail_href:
+                        log.info("  PDF לא זמין — נופל לעמוד פרטי ישיבה")
+                        found = await asyncio.wait_for(
+                            extract_plans_from_meeting_page(
+                                context, detail_href, plans_dict,
+                                meeting_id, meeting_date,
+                            ),
+                            timeout=PER_MEETING_BUDGET_SEC,
+                        )
+                        all_matches.extend(found)
+                except asyncio.TimeoutError:
+                    log.warning(
+                        "ישיבה %s חרגה מ-%ds — מדלגים.",
+                        meeting_id, PER_MEETING_BUDGET_SEC,
+                    )
+                except Exception as e:
+                    log.warning("שגיאה בעיבוד ישיבה %s: %s", meeting_id, e)
 
         except Exception as e:
             log.error("שגיאה כללית ב-Playwright: %s", e)
